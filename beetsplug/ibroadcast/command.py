@@ -75,12 +75,21 @@ class IBroadcastCommand(Subcommand):
             return
 
         items = []
+        tagbuffer = {True: {}, False: {}}
         for item in lib.items(query):
             items.append(item)
             if opts.pretend:
                 self.pretend(item, force=opts.force)
             else:
-                self.upload(item, force=opts.force)
+                self.upload(item, tagbuffer=tagbuffer, force=opts.force)
+        for tagid, trackids in tagbuffer[False].items():
+            self.plugin._log.debug(f"--> Adding remote tag '{self._tagname(tagid)}' [{tagid}] to {len(trackids)} tracks")
+            self.ib.tagtracks(tagid, list(trackids))
+        for tagid, trackids in tagbuffer[True].items():
+            if self._tagname(tagid): 
+                self.plugin._log.debug(f"--> Removing remote tag '{self._tagname(tagid)}' [{tagid}] from {len(trackids)} tracks")
+                self.ib.tagtracks(tagid, list(trackids), True)
+
 
         if opts.sync_playlists:
             self.sync_playlists(items, pretend=opts.pretend)
@@ -153,7 +162,7 @@ class IBroadcastCommand(Subcommand):
             else:
                 self.plugin._log.info(f'Already uploaded: {item}')
 
-    def upload(self, item, force=False):
+    def upload(self, item, tagbuffer, force=False):
         if self.ib is None:
             self._connect()
 
@@ -182,7 +191,7 @@ class IBroadcastCommand(Subcommand):
                 self.plugin._log.warning(f'Not uploaded: {item}')
 
         if trackid:
-            self._sync_tags(trackid, item)
+            self._sync_tags(trackid, item, tagbuffer)
 
     def _needs_upload(self, item):
         utime = self._uploadtime(item)
@@ -204,7 +213,7 @@ class IBroadcastCommand(Subcommand):
 
     ## -- TAGS --
 
-    def _sync_tags(self, trackid, item):
+    def _sync_tags(self, trackid, item, tagbuffer):
         local_tagids = set(self._local_tagids(item))
         remote_tagids = set(self._remote_tagids(trackid))
         lastsync_tagids = set(self._lastsync_tagids(item))
@@ -222,19 +231,25 @@ class IBroadcastCommand(Subcommand):
             self.plugin._log.debug(f'Syncing tags for {item}')
 
         for tagid in locally_added:
-            self.plugin._log.debug(f"--> Adding remote tag '{self._tagname(tagid)}' [{tagid}]")
+            # self.plugin._log.debug(f"--> Adding remote tag '{self._tagname(tagid)}' [{tagid}]")
 
             try:
-                self.ib.tagtracks(tagid, [trackid])
+                # self.ib.tagtracks(tagid, [trackid])
+                if not tagid in tagbuffer[False]:
+                    tagbuffer[False][tagid] = set()
+                tagbuffer[False][tagid].add(trackid)
                 lastsync_tagids.add(tagid)
             except Exception as e:
                 self.plugin._log.error(f"Error tagging iBroadcast track {trackid} with tag '{self._tagname(tagid)}' [{tagid}].")
                 self._stack_trace(e)
 
         for tagid in locally_removed:
-            self.plugin._log.debug(f"--> Removing remote tag '{self._tagname(tagid) or '[deleted tag]'}' [{tagid}]")
+            # self.plugin._log.debug(f"--> Removing remote tag '{self._tagname(tagid) or '[deleted tag]'}' [{tagid}]")
             try:
-                self.ib.tagtracks(tagid, [trackid], untag=True)
+                # self.ib.tagtracks(tagid, [trackid], untag=True)
+                if not tagid in tagbuffer[True]:
+                    tagbuffer[True][tagid] = set()
+                tagbuffer[True][tagid].add(trackid)
                 lastsync_tagids.remove(tagid)
             except Exception as e:
                 self.plugin._log.error(f"Error untagging iBroadcast track {trackid} with tag '{self._tagname(tagid)}' [{tagid}].")
